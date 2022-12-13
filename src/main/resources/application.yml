@@ -1,0 +1,6 @@
+spring:
+  profiles:
+    active: development
+
+defaultSetting:
+  defaultRate: 20.0
