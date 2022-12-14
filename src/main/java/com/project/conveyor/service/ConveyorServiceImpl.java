@@ -1,6 +1,8 @@
 package com.project.conveyor.service;
 
 import com.project.conveyor.config.BasicConfiguration;
+import com.project.conveyor.exception.PrescoringException;
+import com.project.conveyor.exception.ScoringException;
 import com.project.conveyor.model.*;
 import com.project.conveyor.model.enums.EmploymentStatus;
 import com.project.conveyor.model.enums.Gender;
@@ -26,6 +28,79 @@ public class ConveyorServiceImpl implements ConveyorService {
 
     @Autowired
     private BasicConfiguration basicConfiguration;
+
+    private void prescoring (LoanApplicationRequestDTO request) {
+
+        List<ExceptionReasons> reasons = new ArrayList<>();
+
+        String firstName = request.getFirstName();
+        boolean checkFirstName = firstName.matches("^[a-zA-Z]{2,30}");
+        if (!checkFirstName) {
+            reasons.add(new ExceptionReasons("firstName",
+                    "Invalid first name. (from 2 to 30 Latin letters)"));
+        }
+
+        String lastName = request.getLastName();
+        boolean checkLastName =
+                lastName.matches("^[a-zA-Z]{2,30}");
+        if (!checkLastName) {
+            reasons.add(new ExceptionReasons("lastName",
+                    "Invalid last name. (from 2 to 30 Latin letters)"));
+        }
+
+        String middleName = request.getMiddleName();
+        boolean checkMiddleName =
+                middleName.matches("^[a-zA-Z]{2,30}");
+        if (!checkMiddleName) {
+            reasons.add(new ExceptionReasons("middleName",
+                    "Invalid middle name. (from 2 to 30 Latin letters)"));
+        }
+
+        BigDecimal requestAmount = request.getAmount();
+        int resultCompareTo = requestAmount.compareTo(BigDecimal.valueOf(10000.0));
+        boolean checkAmount = resultCompareTo >= 0;
+        if (!checkAmount) {
+            reasons.add(new ExceptionReasons("amount",
+                    "Invalid amount. (a real number greater than or equal to 10000)"));
+        }
+
+        Integer term = request.getTerm();
+        boolean checkTerm = term >= 6;
+        if (!checkTerm) {
+            reasons.add(new ExceptionReasons("term",
+                    "Invalid term. (an integer greater than or equal to 6)"));
+        }
+
+        LocalDate birthDate = request.getBirthdate();
+        int age = birthDate.until(LocalDate.now()).getYears();
+        boolean checkAge = age >= 18;
+        if (!checkAge) {
+            reasons.add(new ExceptionReasons("birthdate",
+                    "Invalid birthdate. (in the format yyyy-mm-dd, no later than 18 years from the current day)"));
+        }
+
+        String email = request.getEmail();
+        boolean checkEmail = email.matches("[\\w\\.]{2,50}@[\\w\\.]{2,20}");
+        if (!checkEmail) {
+            reasons.add(new ExceptionReasons("email",
+                    "Invalid email."));
+        }
+
+        String passportSeries = request.getPassportSeries();
+        boolean checkPassportSeries = passportSeries.matches("[0-9]{4}");
+        if (!checkPassportSeries) {
+            reasons.add(new ExceptionReasons("passportSeries",
+                    "Invalid passport series. (4 digits)"));
+        }
+
+        String passportNumber = request.getPassportNumber();
+        boolean checkPassportNumber = passportNumber.matches("[0-9]{6}");
+        if (!checkPassportNumber) {
+            reasons.add(new ExceptionReasons("passportNumber",
+                    "Invalid passport number. (6 digits)"));
+        }
+        if (!reasons.isEmpty()) throw new PrescoringException(reasons);
+    }
 
     private LoanOfferDTO createLoanOfferDTO(Long applicationId,
                                             BigDecimal requestedAmount,
@@ -72,6 +147,8 @@ public class ConveyorServiceImpl implements ConveyorService {
         long applicationId = 432;
         List<LoanOfferDTO> loanOfferDTOList = new ArrayList<>();
 
+        prescoring(request);
+
         BigDecimal requestedAmount = request.getAmount();
         int term = request.getTerm();
 
@@ -105,6 +182,43 @@ public class ConveyorServiceImpl implements ConveyorService {
 
         return ResponseEntity.ok(loanOfferDTOList);
 
+    }
+
+    private void scoring(ScoringDataDTO request) {
+        EmploymentDTO employment = request.getEmployment();
+
+        List<ExceptionReasons> reasons = new ArrayList<>();
+
+        if (employment.getEmploymentStatus() == EmploymentStatus.UNEMPLOYED) {
+            reasons.add(new ExceptionReasons("employmentStatus",
+                    "You're employment status is UNEMPLOYED."));
+        }
+
+        BigDecimal limitRequestedAmount = employment.getSalary().multiply(BigDecimal.valueOf(20)); // salary * 20
+        if (limitRequestedAmount.compareTo(request.getAmount()) < 0) {
+            reasons.add(new ExceptionReasons("amount/salary",
+                    "The loan amount is more than 20 salaries."));
+        }
+
+        LocalDate birthDate = request.getBirthdate();
+        int age = birthDate.until(LocalDate.now()).getYears();
+        if (age < 20 || age > 60) {
+            reasons.add(new ExceptionReasons("birthdate",
+                    "Age less than 20 or more than 60 years."));
+        }
+
+        int workExperienceTotal = employment.getWorkExperienceTotal();
+        if (workExperienceTotal < 12) {
+            reasons.add(new ExceptionReasons("workExperienceTotal",
+                    "Total experience less than 12 months."));
+        }
+
+        int workExperienceCurrent = employment.getWorkExperienceCurrent();
+        if (workExperienceCurrent <= 3) {
+            reasons.add(new ExceptionReasons("workExperienceCurrent",
+                    "Current experience less than 3 months."));
+        }
+        if (!reasons.isEmpty()) throw new ScoringException(reasons);
     }
 
     private List<PaymentScheduleElement> paymentScheduleCalculation(BigDecimal amount,
@@ -210,9 +324,11 @@ public class ConveyorServiceImpl implements ConveyorService {
         );
     }
 
-    public ResponseEntity<?> calculationLoanParams(@NotNull ScoringDataDTO request) {
+    public @NotNull ResponseEntity<?> calculationLoanParams(@NotNull ScoringDataDTO request) {
 
         BigDecimal defaultRate = basicConfiguration.getDefaultRate();
+
+        scoring(request);
 
         EmploymentDTO employment = request.getEmployment();
         BigDecimal rate = defaultRate;
