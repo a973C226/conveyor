@@ -2,5 +2,5 @@ spring:
   profiles:
     active: development
 
-defaultSetting:
+default-setting:
   defaultRate: 20.0

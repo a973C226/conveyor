@@ -8,7 +8,7 @@ import java.math.BigDecimal;
 
 @Data
 @Component
-@ConfigurationProperties("defaultSettings")
+@ConfigurationProperties("default-setting")
 public class BasicConfiguration {
     private BigDecimal defaultRate;
 }
