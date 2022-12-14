@@ -1,6 +1,8 @@
 package com.project.conveyor.service;
 
 import com.project.conveyor.config.BasicConfiguration;
+import com.project.conveyor.config.PrescoringConfiguration;
+import com.project.conveyor.config.ScoringConfiguration;
 import com.project.conveyor.exception.PrescoringException;
 import com.project.conveyor.exception.ScoringException;
 import com.project.conveyor.model.*;
@@ -10,7 +12,6 @@ import com.project.conveyor.model.enums.MaritalStatus;
 import com.project.conveyor.model.enums.Position;
 import lombok.RequiredArgsConstructor;
 import org.jetbrains.annotations.NotNull;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -26,10 +27,11 @@ import java.util.List;
 @ConfigurationProperties
 public class ConveyorServiceImpl implements ConveyorService {
 
-    @Autowired
-    private BasicConfiguration basicConfiguration;
+    private final BasicConfiguration basicConfiguration;
+    private final PrescoringConfiguration prescoringConfiguration;
+    private final ScoringConfiguration scoringConfiguration;
 
-    private void prescoring (LoanApplicationRequestDTO request) {
+    private void prescoring(LoanApplicationRequestDTO request) {
 
         List<ExceptionReasons> reasons = new ArrayList<>();
 
@@ -57,7 +59,7 @@ public class ConveyorServiceImpl implements ConveyorService {
         }
 
         BigDecimal requestAmount = request.getAmount();
-        int resultCompareTo = requestAmount.compareTo(BigDecimal.valueOf(10000.0));
+        int resultCompareTo = requestAmount.compareTo(prescoringConfiguration.getMinRequestedAmount());
         boolean checkAmount = resultCompareTo >= 0;
         if (!checkAmount) {
             reasons.add(new ExceptionReasons("amount",
@@ -65,7 +67,7 @@ public class ConveyorServiceImpl implements ConveyorService {
         }
 
         Integer term = request.getTerm();
-        boolean checkTerm = term >= 6;
+        boolean checkTerm = term >= prescoringConfiguration.getMinTerm();
         if (!checkTerm) {
             reasons.add(new ExceptionReasons("term",
                     "Invalid term. (an integer greater than or equal to 6)"));
@@ -73,7 +75,7 @@ public class ConveyorServiceImpl implements ConveyorService {
 
         LocalDate birthDate = request.getBirthdate();
         int age = birthDate.until(LocalDate.now()).getYears();
-        boolean checkAge = age >= 18;
+        boolean checkAge = age >= prescoringConfiguration.getMinAge();
         if (!checkAge) {
             reasons.add(new ExceptionReasons("birthdate",
                     "Invalid birthdate. (in the format yyyy-mm-dd, no later than 18 years from the current day)"));
@@ -117,12 +119,23 @@ public class ConveyorServiceImpl implements ConveyorService {
             rate = rate.subtract(BigDecimal.valueOf(1.0)); // rate - 1.0
         }
 
+        /*
+        Расчёт коэффициента аннуитета по формуле:
+        Месячная ставка * (1 + Месячная ставка)^Кол-во платежей / ((1 + Месячная ставка)^Кол-во платежей - 1)
+         */
         BigDecimal monthlyRate = rate.divide(BigDecimal.valueOf(12 * 100), 20, RoundingMode.HALF_EVEN);
         BigDecimal bracketsInFormula = monthlyRate.add(BigDecimal.valueOf(1)).pow(term);
+        // Числитель формулы
         BigDecimal numeratorAnnuityRatioCalculation = monthlyRate.multiply(bracketsInFormula);
+        // Знаменатель формулы
         BigDecimal denominatorAnnuityRatioCalculation = bracketsInFormula.subtract(BigDecimal.valueOf(1));
         BigDecimal annuityRatio =
                 numeratorAnnuityRatioCalculation.divide(denominatorAnnuityRatioCalculation, 20, RoundingMode.HALF_EVEN);
+
+        /*
+        Расчёт месячного аннуитетного платежа по формуле:
+        Сумма кредита * Коэффициент аннуитета
+         */
         BigDecimal monthlyPayment = requestedAmount.multiply(annuityRatio).setScale(2, RoundingMode.HALF_EVEN);
 
         BigDecimal totalAmount = monthlyPayment.multiply(BigDecimal.valueOf(term));
@@ -143,8 +156,8 @@ public class ConveyorServiceImpl implements ConveyorService {
         );
     }
 
-    public @NotNull ResponseEntity<?> getLoanOffers(@NotNull LoanApplicationRequestDTO request) {
-        long applicationId = 432;
+    public @NotNull ResponseEntity<List<LoanOfferDTO>> getLoanOffers(@NotNull LoanApplicationRequestDTO request) {
+        long applicationId = basicConfiguration.getApplicationId();
         List<LoanOfferDTO> loanOfferDTOList = new ArrayList<>();
 
         prescoring(request);
@@ -194,7 +207,8 @@ public class ConveyorServiceImpl implements ConveyorService {
                     "You're employment status is UNEMPLOYED."));
         }
 
-        BigDecimal limitRequestedAmount = employment.getSalary().multiply(BigDecimal.valueOf(20)); // salary * 20
+        // limitRequestedAmount = salary * 20.0
+        BigDecimal limitRequestedAmount = employment.getSalary().multiply(scoringConfiguration.getLoanToSalaryRatio());
         if (limitRequestedAmount.compareTo(request.getAmount()) < 0) {
             reasons.add(new ExceptionReasons("amount/salary",
                     "The loan amount is more than 20 salaries."));
@@ -202,44 +216,60 @@ public class ConveyorServiceImpl implements ConveyorService {
 
         LocalDate birthDate = request.getBirthdate();
         int age = birthDate.until(LocalDate.now()).getYears();
-        if (age < 20 || age > 60) {
+        if (age < scoringConfiguration.getMinAge() || age > scoringConfiguration.getMaxAge()) {
             reasons.add(new ExceptionReasons("birthdate",
                     "Age less than 20 or more than 60 years."));
         }
 
         int workExperienceTotal = employment.getWorkExperienceTotal();
-        if (workExperienceTotal < 12) {
+        if (workExperienceTotal < scoringConfiguration.getMinWorkExperienceTotal()) {
             reasons.add(new ExceptionReasons("workExperienceTotal",
                     "Total experience less than 12 months."));
         }
 
         int workExperienceCurrent = employment.getWorkExperienceCurrent();
-        if (workExperienceCurrent <= 3) {
+        if (workExperienceCurrent <= scoringConfiguration.getMinWorkExperienceCurrent()) {
             reasons.add(new ExceptionReasons("workExperienceCurrent",
                     "Current experience less than 3 months."));
         }
         if (!reasons.isEmpty()) throw new ScoringException(reasons);
     }
 
+    /**
+     * Метод расчёта графика платежей
+     * @link <a href="https://journal.tinkoff.ru/guide/credit-payment/">Как посчитать ежемесячный платеж по кредиту</a>
+     * Входные данные:
+     * @param amount сумма полученного кредита
+     * @param rate ставка по кредиту рассчитанная в методе calculationLoanParams
+     * @param term срок выплачивания кредита
+     * @param monthlyPayment сумма масячного аннуитетного платежа
+     * @param dateFirstPayment дата первого платежа по кредиту(спустя месяц после получения кредита)
+     * @return график платежей, состоящий из номера, даты и общей суммы платежа, доли погашения процентов и доли погашения долга от суммы, остатка долга
+     */
     private List<PaymentScheduleElement> paymentScheduleCalculation(BigDecimal amount,
                                                                     BigDecimal rate,
                                                                     Integer term,
                                                                     BigDecimal monthlyPayment,
                                                                     LocalDate dateFirstPayment) {
 
+
         List<PaymentScheduleElement> paymentSchedule = new ArrayList<>();
+
         LocalDate datePayment = dateFirstPayment;
         BigDecimal remainingDebt = amount;
 
         for (int i = 0; i < term; i++) {
 
+            // Количество дней, за прошедший месяц (нужно для вычисления днейвной ставки)
             int lengthMonth = datePayment.minusMonths(1).lengthOfMonth();
 
 
             BigDecimal rateDecimal = rate.divide(BigDecimal.valueOf(100), 20, RoundingMode.HALF_EVEN);
-            BigDecimal dailyCoef = new BigDecimal(0);
 
-            // dailyCoef is lengthMonth / lengthYear
+            // Дневной коэффициент из формулы: Количество дней в месяце / Количество дней в году
+            BigDecimal dailyCoef;
+
+            // Проверка на переход в новый год (год, возможно, был/будет високосным => изменится дневная ставка)
             if (datePayment.getMonthValue() == 1 && i > 0) {
                 boolean isLeapBeforeYear = datePayment.minusYears(1).isLeapYear();
                 int lengthBeforeYear = (isLeapBeforeYear) ? 366: 365;
@@ -247,25 +277,33 @@ public class ConveyorServiceImpl implements ConveyorService {
                 int lengthNowYear = (isLeapNowYear) ? 366: 365;
 
                 LocalDate monthBefore = datePayment.minusMonths(1);
+                // Количество дней от последнего платежа до окончания года
                 int daysUntilNextMonth = monthBefore.until(datePayment.withDayOfMonth(1)).getDays() - 1;
+                // Количество дней от начала нового года до следующего платежа
                 int daysInNowMonth = datePayment.withDayOfMonth(1).until(datePayment).getDays() + 1;
 
-                BigDecimal firstPartDailyCoef =
+                // Расчёт дневного коэффициента прошлого и нового года
+                BigDecimal dailyCoefBeforeYear =
                         BigDecimal.valueOf(daysUntilNextMonth).divide(BigDecimal.valueOf(lengthBeforeYear), 20, RoundingMode.HALF_EVEN);
-                BigDecimal secondPartDailyCoef =
+                BigDecimal dailyCoefNowYear =
                         BigDecimal.valueOf(daysInNowMonth).divide(BigDecimal.valueOf(lengthNowYear), 20, RoundingMode.HALF_EVEN);
-                dailyCoef = firstPartDailyCoef.add(secondPartDailyCoef);
+                dailyCoef = dailyCoefBeforeYear.add(dailyCoefNowYear);
             }
             else {
                 boolean isLeap = datePayment.isLeapYear();
                 int lengthYear = (isLeap) ? 366: 365;
                 dailyCoef = BigDecimal.valueOf(lengthMonth).divide(BigDecimal.valueOf(lengthYear), 20, RoundingMode.HALF_EVEN);
             }
+
+            /*
+            Вычисление суммы процентов по формуле:
+            Остаток долга × Процентная ставка × Количество дней в месяце / Количество дней в году
+             */
             BigDecimal interestPayment =
                     remainingDebt.multiply(rateDecimal).multiply(dailyCoef).setScale(2, RoundingMode.HALF_EVEN);
 
-            if (i == term - 1) {
-                monthlyPayment = remainingDebt.add(interestPayment);
+            if (i == term - 1) {        /* проверка на последний платёж */
+                monthlyPayment = remainingDebt.add(interestPayment);        /* последний платёж состоит из остатка долга + проценты */
             }
 
             BigDecimal debtPayment = monthlyPayment.subtract(interestPayment);
@@ -290,17 +328,38 @@ public class ConveyorServiceImpl implements ConveyorService {
         return paymentSchedule;
     }
 
+    /**
+     * Метод создания CreditDTO.
+     * @link <a href="https://journal.tinkoff.ru/guide/credit-payment/">Как посчитать ежемесячный платеж по кредиту</a>
+     * @param amount сумма кредита
+     * @param term срок выплачивания кредита
+     * @param rate ставка по кредиту рассчитанная в методе calculationLoanParams
+     * @param isInsuranceEnabled булево значение включения страховки в сумму кредита
+     * @param isSalaryClient булево значение является ли клиент зарплатным
+     * @return составляется кредитное предложение с графиком платежей
+     */
     private CreditDTO createCreditDTO(BigDecimal amount,
                                       Integer term,
                                       BigDecimal rate,
                                       Boolean isInsuranceEnabled,
                                       Boolean isSalaryClient) {
 
+        /*
+        Расчёт коэффициента аннуитета по формуле:
+        Месячная ставка * (1 + Месячная ставка)^Кол-во платежей / ((1 + Месячная ставка)^Кол-во платежей - 1)
+         */
         BigDecimal monthlyRate = rate.divide(BigDecimal.valueOf(12 * 100), 20, RoundingMode.HALF_EVEN);
         BigDecimal bracketsInFormula = monthlyRate.add(BigDecimal.valueOf(1)).pow(term);
+        // Числитель формулы
         BigDecimal numeratorAnnuityRatioCalculation = monthlyRate.multiply(bracketsInFormula);
+        // Знаменатель формулы
         BigDecimal denominatorAnnuityRatioCalculation = bracketsInFormula.subtract(BigDecimal.valueOf(1));
         BigDecimal annuityRatio = numeratorAnnuityRatioCalculation.divide(denominatorAnnuityRatioCalculation, 20, RoundingMode.HALF_EVEN);
+
+        /*
+        Расчёт месячного аннуитетного платежа по формуле:
+        Сумма кредита * Коэффициент аннуитета
+         */
         BigDecimal monthlyPayment = amount.multiply(annuityRatio).setScale(2, RoundingMode.HALF_EVEN);
 
         BigDecimal psk = monthlyPayment.multiply(BigDecimal.valueOf(term)).subtract(amount)
@@ -324,7 +383,7 @@ public class ConveyorServiceImpl implements ConveyorService {
         );
     }
 
-    public @NotNull ResponseEntity<?> calculationLoanParams(@NotNull ScoringDataDTO request) {
+    public @NotNull ResponseEntity<CreditDTO> calculationLoanParams(@NotNull ScoringDataDTO request) {
 
         BigDecimal defaultRate = basicConfiguration.getDefaultRate();
 

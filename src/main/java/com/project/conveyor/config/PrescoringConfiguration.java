@@ -8,8 +8,9 @@ import java.math.BigDecimal;
 
 @Data
 @Component
-@ConfigurationProperties("default-setting")
-public class BasicConfiguration {
-    private BigDecimal defaultRate;
-    private long applicationId;
+@ConfigurationProperties("prescoring-constants")
+public class PrescoringConfiguration {
+    private BigDecimal minRequestedAmount;
+    private Integer minTerm;
+    private Integer minAge;
 }
