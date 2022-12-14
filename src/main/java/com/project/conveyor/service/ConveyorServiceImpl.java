@@ -68,7 +68,7 @@ public class ConveyorServiceImpl implements ConveyorService {
         );
     }
 
-    public ResponseEntity<?> getLoanOffers(LoanApplicationRequestDTO request) {
+    public @NotNull ResponseEntity<?> getLoanOffers(@NotNull LoanApplicationRequestDTO request) {
         long applicationId = 432;
         List<LoanOfferDTO> loanOfferDTOList = new ArrayList<>();
 
@@ -210,7 +210,7 @@ public class ConveyorServiceImpl implements ConveyorService {
         );
     }
 
-    public @NotNull ResponseEntity<?> calculationLoanParams(ScoringDataDTO request) {
+    public ResponseEntity<?> calculationLoanParams(@NotNull ScoringDataDTO request) {
 
         BigDecimal defaultRate = basicConfiguration.getDefaultRate();
 
