@@ -1,0 +1,17 @@
+spring:
+  profiles:
+    active: development
+
+default-setting:
+  defaultRate: 20.0
+  applicationId: 1
+prescoring-constants:
+  minRequestedAmount: 10000.0
+  minTerm: 6
+  minAge: 18
+scoring-constants:
+  loanToSalaryRatio: 20.0
+  minAge: 20
+  maxAge: 60
+  minWorkExperienceTotal: 12
+  minWorkExperienceCurrent: 3
