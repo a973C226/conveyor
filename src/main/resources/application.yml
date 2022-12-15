@@ -1,6 +1,8 @@
 spring:
   profiles:
     active: development
+  main:
+    banner-mode: off
 
 default-setting:
   defaultRate: 20.0

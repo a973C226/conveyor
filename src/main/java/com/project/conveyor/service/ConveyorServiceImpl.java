@@ -12,6 +12,8 @@ import com.project.conveyor.model.enums.MaritalStatus;
 import com.project.conveyor.model.enums.Position;
 import lombok.RequiredArgsConstructor;
 import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -30,8 +32,11 @@ public class ConveyorServiceImpl implements ConveyorService {
     private final BasicConfiguration basicConfiguration;
     private final PrescoringConfiguration prescoringConfiguration;
     private final ScoringConfiguration scoringConfiguration;
+    static final Logger logger = LoggerFactory.getLogger(ConveyorServiceImpl.class);
 
     private void prescoring(LoanApplicationRequestDTO request) {
+
+        logger.info("ConveyorServiceImpl.prescoring started with arg: {}", request);
 
         List<ExceptionReasons> reasons = new ArrayList<>();
 
@@ -101,7 +106,11 @@ public class ConveyorServiceImpl implements ConveyorService {
             reasons.add(new ExceptionReasons("passportNumber",
                     "Invalid passport number. (6 digits)"));
         }
-        if (!reasons.isEmpty()) throw new PrescoringException(reasons);
+        if (!reasons.isEmpty()) {
+            logger.info("ConveyorServiceImpl.prescoring failed with an error: {}", reasons);
+            throw new PrescoringException(reasons);
+        }
+        logger.info("ConveyorServiceImpl.prescoring completed successfully.");
     }
 
     private LoanOfferDTO createLoanOfferDTO(Long applicationId,
@@ -110,10 +119,16 @@ public class ConveyorServiceImpl implements ConveyorService {
                                             Boolean isInsuranceEnabled,
                                             Boolean isSalaryClient) {
 
+        logger.info("ConveyorServiceImpl.createLoanOfferDTO started with args: applicationId = {}," +
+                        "requestedAmount = {}, term = {}, isInsuranceEnabled = {}, isSalaryClient = {}", applicationId,
+                requestedAmount, term, isInsuranceEnabled, isSalaryClient);
+
         BigDecimal rate = basicConfiguration.getDefaultRate();
 
         if (isInsuranceEnabled) {
             rate = rate.subtract(BigDecimal.valueOf(3.0)); // rate - 3.0
+            BigDecimal insurance = requestedAmount.multiply(BigDecimal.valueOf(0.1)); // insurance = requestedAmount * 10%
+            requestedAmount = requestedAmount.add(insurance);
         }
         if (isSalaryClient) {
             rate = rate.subtract(BigDecimal.valueOf(1.0)); // rate - 1.0
@@ -139,12 +154,8 @@ public class ConveyorServiceImpl implements ConveyorService {
         BigDecimal monthlyPayment = requestedAmount.multiply(annuityRatio).setScale(2, RoundingMode.HALF_EVEN);
 
         BigDecimal totalAmount = monthlyPayment.multiply(BigDecimal.valueOf(term));
-        if (isInsuranceEnabled) {
-            BigDecimal insurance = requestedAmount.multiply(BigDecimal.valueOf(0.1)); // insurance = requestedAmount * 10%
-            totalAmount = totalAmount.add(insurance);
-        }
 
-        return new LoanOfferDTO(
+        LoanOfferDTO loanOfferDTO = new LoanOfferDTO(
                 applicationId,
                 requestedAmount,
                 totalAmount,
@@ -154,9 +165,15 @@ public class ConveyorServiceImpl implements ConveyorService {
                 isInsuranceEnabled,
                 isSalaryClient
         );
+
+        logger.info("ConveyorServiceImpl.createLoanOfferDTO completed successfully and returned: {}", loanOfferDTO);
+        return loanOfferDTO;
     }
 
     public @NotNull ResponseEntity<List<LoanOfferDTO>> getLoanOffers(@NotNull LoanApplicationRequestDTO request) {
+
+        logger.info("ConveyorServiceImpl.getLoanOffers started with  arg: {}", request);
+
         long applicationId = basicConfiguration.getApplicationId();
         List<LoanOfferDTO> loanOfferDTOList = new ArrayList<>();
 
@@ -168,36 +185,40 @@ public class ConveyorServiceImpl implements ConveyorService {
         LoanOfferDTO firstOffer = createLoanOfferDTO(applicationId,
                 requestedAmount,
                 term,
-                true,
-                true);
+                false,
+                false);
         loanOfferDTOList.add(firstOffer);
 
         LoanOfferDTO secondOffer = createLoanOfferDTO(applicationId,
                 requestedAmount,
                 term,
-                true,
-                false);
+                false,
+                true);
         loanOfferDTOList.add(secondOffer);
 
         LoanOfferDTO thirdOffer = createLoanOfferDTO(applicationId,
                 requestedAmount,
                 term,
-                false,
-                true);
+                true,
+                false);
         loanOfferDTOList.add(thirdOffer);
 
         LoanOfferDTO fourthOffer = createLoanOfferDTO(applicationId,
                 requestedAmount,
                 term,
-                false,
-                false);
+                true,
+                true);
         loanOfferDTOList.add(fourthOffer);
 
+        logger.info("ConveyorServiceImpl.getLoanOffers completed successfully and returned: {}", loanOfferDTOList);
         return ResponseEntity.ok(loanOfferDTOList);
 
     }
 
     private void scoring(ScoringDataDTO request) {
+
+        logger.info("ConveyorServiceImpl.scoring started with arg: {}", request);
+
         EmploymentDTO employment = request.getEmployment();
 
         List<ExceptionReasons> reasons = new ArrayList<>();
@@ -232,7 +253,11 @@ public class ConveyorServiceImpl implements ConveyorService {
             reasons.add(new ExceptionReasons("workExperienceCurrent",
                     "Current experience less than 3 months."));
         }
-        if (!reasons.isEmpty()) throw new ScoringException(reasons);
+        if (!reasons.isEmpty()) {
+            logger.info("ConveyorServiceImpl.scoring failed with an error: {}", reasons);
+            throw new ScoringException(reasons);
+        }
+        logger.info("ConveyorServiceImpl.scoring completed successfully.");
     }
 
     /**
@@ -252,6 +277,9 @@ public class ConveyorServiceImpl implements ConveyorService {
                                                                     BigDecimal monthlyPayment,
                                                                     LocalDate dateFirstPayment) {
 
+        logger.info("ConveyorServiceImpl.paymentScheduleCalculation started with args: amount = {}," +
+                        "rate = {}, term = {}, monthlyPayment = {}, dateFirstPayment = {}", amount,
+                rate, term, monthlyPayment, dateFirstPayment);
 
         List<PaymentScheduleElement> paymentSchedule = new ArrayList<>();
 
@@ -325,6 +353,7 @@ public class ConveyorServiceImpl implements ConveyorService {
             paymentSchedule.add(payment);
         }
 
+        logger.info("ConveyorServiceImpl.paymentScheduleCalculation completed successfully and returned: {}", paymentSchedule);
         return paymentSchedule;
     }
 
@@ -344,6 +373,10 @@ public class ConveyorServiceImpl implements ConveyorService {
                                       Boolean isInsuranceEnabled,
                                       Boolean isSalaryClient) {
 
+        logger.info("ConveyorServiceImpl.createCreditDTO started with args: amount = {}," +
+                        "term = {}, rate = {}, isInsuranceEnabled = {}, isSalaryClient = {}", amount,
+                term, rate, isInsuranceEnabled, isSalaryClient);
+
         /*
         Расчёт коэффициента аннуитета по формуле:
         Месячная ставка * (1 + Месячная ставка)^Кол-во платежей / ((1 + Месячная ставка)^Кол-во платежей - 1)
@@ -362,12 +395,11 @@ public class ConveyorServiceImpl implements ConveyorService {
          */
         BigDecimal monthlyPayment = amount.multiply(annuityRatio).setScale(2, RoundingMode.HALF_EVEN);
 
-        BigDecimal psk = monthlyPayment.multiply(BigDecimal.valueOf(term)).subtract(amount)
-                .divide(amount, 20, RoundingMode.HALF_EVEN).multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_EVEN);
+        BigDecimal psk = monthlyRate.multiply(BigDecimal.valueOf(term * 100)).setScale(2, RoundingMode.HALF_EVEN);
 
         LocalDate dateFirstPayment = LocalDate.now().plusMonths(1);
 
-        return new CreditDTO(
+        CreditDTO creditDTO = new CreditDTO(
                 amount,
                 term,
                 monthlyPayment,
@@ -381,9 +413,14 @@ public class ConveyorServiceImpl implements ConveyorService {
                         monthlyPayment,
                         dateFirstPayment)
         );
+
+        logger.info("ConveyorServiceImpl.createCreditDTO completed successfully and returned: {}", creditDTO);
+        return creditDTO;
     }
 
     public @NotNull ResponseEntity<CreditDTO> calculationLoanParams(@NotNull ScoringDataDTO request) {
+
+        logger.info("ConveyorServiceImpl.calculationLoanParams started with  arg: {}", request);
 
         BigDecimal defaultRate = basicConfiguration.getDefaultRate();
 
@@ -433,13 +470,24 @@ public class ConveyorServiceImpl implements ConveyorService {
             rate = rate.add(BigDecimal.valueOf(3));
         }
 
-        BigDecimal amount = request.getAmount();
-        int term = request.getTerm();
+
         boolean isInsuranceEnabled = request.getIsInsuranceEnabled();
         boolean isSalaryClient = request.getIsSalaryClient();
+        BigDecimal amount = request.getAmount();
+        if (isInsuranceEnabled) {
+            rate = rate.subtract(BigDecimal.valueOf(3.0));
+            BigDecimal insurance = amount.multiply(BigDecimal.valueOf(0.1)); // insurance = requestedAmount * 10%
+            amount = amount.add(insurance);
+        }
+        if (isSalaryClient) {
+            rate = rate.subtract(BigDecimal.valueOf(1.0));
+        }
+
+        int term = request.getTerm();
 
         CreditDTO response = createCreditDTO(amount, term, rate, isInsuranceEnabled, isSalaryClient);
-        return ResponseEntity.ok(response);
 
+        logger.info("ConveyorServiceImpl.calculationLoanParams completed successfully and returned: {}", response);
+        return ResponseEntity.ok(response);
     }
 }
