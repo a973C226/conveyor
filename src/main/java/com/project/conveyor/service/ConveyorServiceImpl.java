@@ -127,6 +127,8 @@ public class ConveyorServiceImpl implements ConveyorService {
 
         if (isInsuranceEnabled) {
             rate = rate.subtract(BigDecimal.valueOf(3.0)); // rate - 3.0
+            BigDecimal insurance = requestedAmount.multiply(BigDecimal.valueOf(0.1)); // insurance = requestedAmount * 10%
+            requestedAmount = requestedAmount.add(insurance);
         }
         if (isSalaryClient) {
             rate = rate.subtract(BigDecimal.valueOf(1.0)); // rate - 1.0
@@ -152,10 +154,6 @@ public class ConveyorServiceImpl implements ConveyorService {
         BigDecimal monthlyPayment = requestedAmount.multiply(annuityRatio).setScale(2, RoundingMode.HALF_EVEN);
 
         BigDecimal totalAmount = monthlyPayment.multiply(BigDecimal.valueOf(term));
-        if (isInsuranceEnabled) {
-            BigDecimal insurance = requestedAmount.multiply(BigDecimal.valueOf(0.1)); // insurance = requestedAmount * 10%
-            totalAmount = totalAmount.add(insurance);
-        }
 
         LoanOfferDTO loanOfferDTO = new LoanOfferDTO(
                 applicationId,
@@ -187,29 +185,29 @@ public class ConveyorServiceImpl implements ConveyorService {
         LoanOfferDTO firstOffer = createLoanOfferDTO(applicationId,
                 requestedAmount,
                 term,
-                true,
-                true);
+                false,
+                false);
         loanOfferDTOList.add(firstOffer);
 
         LoanOfferDTO secondOffer = createLoanOfferDTO(applicationId,
                 requestedAmount,
                 term,
-                true,
-                false);
+                false,
+                true);
         loanOfferDTOList.add(secondOffer);
 
         LoanOfferDTO thirdOffer = createLoanOfferDTO(applicationId,
                 requestedAmount,
                 term,
-                false,
-                true);
+                true,
+                false);
         loanOfferDTOList.add(thirdOffer);
 
         LoanOfferDTO fourthOffer = createLoanOfferDTO(applicationId,
                 requestedAmount,
                 term,
-                false,
-                false);
+                true,
+                true);
         loanOfferDTOList.add(fourthOffer);
 
         logger.info("ConveyorServiceImpl.getLoanOffers completed successfully and returned: {}", loanOfferDTOList);
@@ -397,8 +395,7 @@ public class ConveyorServiceImpl implements ConveyorService {
          */
         BigDecimal monthlyPayment = amount.multiply(annuityRatio).setScale(2, RoundingMode.HALF_EVEN);
 
-        BigDecimal psk = monthlyPayment.multiply(BigDecimal.valueOf(term)).subtract(amount)
-                .divide(amount, 20, RoundingMode.HALF_EVEN).multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_EVEN);
+        BigDecimal psk = monthlyRate.multiply(BigDecimal.valueOf(term * 100)).setScale(2, RoundingMode.HALF_EVEN);
 
         LocalDate dateFirstPayment = LocalDate.now().plusMonths(1);
 
@@ -473,10 +470,20 @@ public class ConveyorServiceImpl implements ConveyorService {
             rate = rate.add(BigDecimal.valueOf(3));
         }
 
-        BigDecimal amount = request.getAmount();
-        int term = request.getTerm();
+
         boolean isInsuranceEnabled = request.getIsInsuranceEnabled();
         boolean isSalaryClient = request.getIsSalaryClient();
+        BigDecimal amount = request.getAmount();
+        if (isInsuranceEnabled) {
+            rate = rate.subtract(BigDecimal.valueOf(3.0));
+            BigDecimal insurance = amount.multiply(BigDecimal.valueOf(0.1)); // insurance = requestedAmount * 10%
+            amount = amount.add(insurance);
+        }
+        if (isSalaryClient) {
+            rate = rate.subtract(BigDecimal.valueOf(1.0));
+        }
+
+        int term = request.getTerm();
 
         CreditDTO response = createCreditDTO(amount, term, rate, isInsuranceEnabled, isSalaryClient);
 
